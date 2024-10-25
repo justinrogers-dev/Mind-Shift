@@ -9,10 +9,19 @@ public class Rotate : MonoBehaviour
     public float rotationAngle = 90f;
 
     private bool isRotating = false;
+    private bool hasRotated = false;
     private Quaternion startRotation;
     private Quaternion targetRotation;
     private float rotationProgress = 0f;
     public IdaMovement idaMovement;
+
+    // public void TriggerRotation()
+    // {
+    //     if (!hasRotated)
+    //     {
+    //         StartRotation();
+    //     }
+    // }
     
     void Update()
     {
