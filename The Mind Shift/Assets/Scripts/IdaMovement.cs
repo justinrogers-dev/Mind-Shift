@@ -176,14 +176,4 @@ public class IdaMovement : MonoBehaviour
         isMoving = false;
         isRotating = false;
     }
-
-    void OnTriggerEnter(Collider other)
-    {
-        DoorController door = other.GetComponent<DoorController>();
-        if (door != null && !door.isStartDoor)
-        {
-            canMove = false;
-            door.EnterDoor(this);
-        }
-    }
 }

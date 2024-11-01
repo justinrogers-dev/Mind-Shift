@@ -4,18 +4,13 @@ using UnityEngine;
 
 public class DoorController : MonoBehaviour
 {
+    public Transform spawnPoint;    
+    public Transform stopPoint;       
+    public float moveSpeed = 2f;
     public bool isStartDoor = true;
-    public float entranceDelay = 1f;
-    public float entranceSpeed = 2f;
-    public float entranceDistance = 2f;
-    public float heightOffset = 0.5f;
-
+    
     private IdaMovement ida;
-    private Vector3 behindDoorPosition;
-    private Vector3 targetPosition;
-    private bool isEntering = false;
-    public Vector3 walkDirection = Vector3.right;
-    // Start is called before the first frame update
+
     void Start()
     {
         if (isStartDoor)
@@ -23,52 +18,43 @@ public class DoorController : MonoBehaviour
             ida = FindObjectOfType<IdaMovement>();
             if (ida != null)
             {
-                RaycastHit hit;
-                if (Physics.Raycast(transform.position + Vector3.up, Vector3.down, out hit))
-                {
-                    float platformHeight = hit.point.y;
-                    
-                    behindDoorPosition = transform.position - walkDirection * 1f;
-                    behindDoorPosition.y = platformHeight + heightOffset;
-                    
-                    targetPosition = transform.position + walkDirection * entranceDistance;
-                    targetPosition.y = platformHeight + heightOffset;
-
-                    ida.transform.position = behindDoorPosition;
-                    ida.transform.forward = walkDirection;
-                    ida.canMove = false;
-
-                    Invoke("StartEntering", entranceDelay);
-                }
+                ida.gameObject.SetActive(false);
+                StartCoroutine(StartSequence());
             }
         }
     }
 
-    void StartEntering()
+    IEnumerator StartSequence()
     {
-        isEntering = true;
-    }
+        yield return new WaitForSeconds(1f);
 
-    // Update is called once per frame
-    void Update()
-    {
-        if (isEntering && ida != null)
+        ida.transform.position = spawnPoint.position;
+        ida.transform.forward = (stopPoint.position - spawnPoint.position).normalized; // Face the direction of movement
+        ida.gameObject.SetActive(true);
+        ida.canMove = false;
+        while (Vector3.Distance(ida.transform.position, stopPoint.position) > 0.01f)
         {
-            ida.transform.position = Vector3.MoveTowards(ida.transform.position, targetPosition, entranceSpeed * Time.deltaTime);
-            if (Vector3.Distance(ida.transform.position, targetPosition) < 0.01f)
-            {
-                isEntering = false;
-                ida.canMove = true;
-            }
+            ida.transform.position = Vector3.MoveTowards(
+                ida.transform.position,
+                stopPoint.position,
+                moveSpeed * Time.deltaTime
+            );
+            yield return null;
         }
+        ida.canMove = true;
     }
 
-    public void EnterDoor(IdaMovement enteringIda)
+    void OnTriggerEnter(Collider other)
     {
         if (!isStartDoor)
         {
-            Debug.Log("Level complete");
-            enteringIda.gameObject.SetActive(false);
+            IdaMovement ida = other.GetComponent<IdaMovement>();
+            if (ida != null)
+            {
+                Debug.Log("Deleting Ida");
+                //Destroy(other.gameObject); 
+                other.gameObject.SetActive(false);
+            }
         }
-    }
+    }  
 }
