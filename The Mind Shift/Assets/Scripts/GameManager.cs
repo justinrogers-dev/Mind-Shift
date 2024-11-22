@@ -10,19 +10,27 @@ public class GameManager : MonoBehaviour
     // Singleton instance of GameManager
     public static GameManager instance;
 
-    // Reference to the player object
+    [Header("Level References")]
     public IdaMovement player;
-
-    // List of pivot points in the level
     public List<Transform> pivots;
-
-    // List of path conditions for activating/deactivating paths
     public List<PathCondition> pathConditions = new List<PathCondition>();
+    
+    [Header("Scene Management")]
+    public Loader sceneLoader;
+    public string nextLevelName = "Illusion 2";
+    public float transitionDelay = 1f;
+    public bool isFinalLevel = false;
 
     private void Awake()
     {
         // Set up the singleton instance
         instance = this;
+        
+        // Find the loader if not assigned
+        if (sceneLoader == null)
+        {
+            sceneLoader = FindObjectOfType<Loader>();
+        }
     }
 
     void Update()
@@ -92,15 +100,62 @@ public class GameManager : MonoBehaviour
         // Check for reset input (R key)
         if (Input.GetKeyDown(KeyCode.R))
         {
-            // Reload the current scene
-            SceneManager.LoadSceneAsync(SceneManager.GetActiveScene().name);
+            ResetLevel();
         }
+    }
+
+    private void ResetLevel()
+    {
+        // Reload the current scene
+        SceneManager.LoadSceneAsync(SceneManager.GetActiveScene().name);
     }
 
     public void RotateRightPivot()
     {
-        // Rotate the right pivot 90 degrees around the Z-axis
+        // Complete any ongoing rotation and start a new one
         pivots[1].DOComplete();
         pivots[1].DORotate(new Vector3(0, 0, 90), .6f).SetEase(Ease.OutBack);
+    }
+
+    public void OnFinalButtonReached()
+    {
+        if (isFinalLevel)
+        {
+            // Handle final level completion
+            StartCoroutine(LoadMainMenu());
+        }
+        else
+        {
+            // Load the next level
+            StartCoroutine(LoadNextLevel());
+        }
+    }
+
+    private IEnumerator LoadNextLevel()
+    {
+        yield return new WaitForSeconds(transitionDelay);
+
+        if (sceneLoader != null)
+        {
+            sceneLoader.LoadScene(nextLevelName);
+        }
+        else
+        {
+            SceneManager.LoadSceneAsync(nextLevelName);
+        }
+    }
+
+    private IEnumerator LoadMainMenu()
+    {
+        yield return new WaitForSeconds(transitionDelay);
+
+        if (sceneLoader != null)
+        {
+            sceneLoader.LoadScene("Main Menu");
+        }
+        else
+        {
+            SceneManager.LoadSceneAsync("Main Menu");
+        }
     }
 }

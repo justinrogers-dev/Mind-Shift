@@ -7,62 +7,90 @@ using WalkData;
 [SelectionBase]
 public class IdaMovement : MonoBehaviour
 {
-    // Tracks if the player is currently moving along a path
+    [Header("State")]
     public bool walking;
+    private bool isRotating;
+    private Vector3 previousPosition;
 
-    // References to the nodes the player is currently on and clicked on
-    [Header("Current Position")]
+    
+    [Header("Node References")]
     public Transform currentNode;
     public Transform clickedNode;
 
-    // Click feedback system
+
     [Header("Click Visualization")]
     public GameObject indicatorPrefab;
     public Color indicatorColor = new Color(1f, 1f, 1f, 0.5f);
     public float indicatorFadeTime = 0.5f;
     private GameObject currentIndicator;
 
-    // Player movement configuration
-    [Header("Movement Properties")]
-    public float moveSpeed = 5f;
-    public float rotationSpeed = 10f;
 
-    // Path tracking variables
-    private List<Transform> finalPath = new List<Transform>();
-    private int currentIndex;
-    private float moveStartTime;
-    private Vector3 moveStartPos;
-    private Vector3 targetPos;
-    private Quaternion startRotation;
-    private Quaternion targetRotation;
+    [Header("Movement Properties")]
+    public float baseMovementSpeed = 5f;
+    public float rotationSpeed = 180f;
+    public float stairSpeedMultiplier = 1.5f;
+    public float rotationDuration = 0.3f;
+    public float jumpHeight = 0.2f;
+    public float smoothTransitionDistance = 0.1f;
+
+    
+    [Header("Movement Curves")]
+    public AnimationCurve movementCurve = AnimationCurve.EaseInOut(0, 0, 1, 1);
+    public AnimationCurve rotationCurve = AnimationCurve.EaseInOut(0, 0, 1, 1);
+    public AnimationCurve jumpCurve = new AnimationCurve(
+        new Keyframe(0, 0),
+        new Keyframe(0.5f, 1),
+        new Keyframe(1, 0)
+    );
+
+    // Path tracking using queues
+    private Queue<Transform> pathQueue = new Queue<Transform>();
+    private HashSet<Transform> visitedNodes = new HashSet<Transform>();
+    private Queue<Vector3> movementPoints = new Queue<Vector3>();
+    private Vector3 currentTargetPosition;
+    private float currentMoveDuration;
+    private float moveTimer;
 
     private void Start()
     {
-        // Initialize the current node
+        InitializeComponents();
+    }
+
+
+    private void InitializeComponents()
+    {
         RayCastDown();
-        
-        // Create and set up the click indicator if it doesn't exist
         InitializeClickIndicator();
+        previousPosition = transform.position;
+        SetupAnimationCurves();
+    }
+
+    // Setup animation curves for movement
+    private void SetupAnimationCurves()
+    {
+        movementCurve.postWrapMode = WrapMode.Once;
+        jumpCurve.postWrapMode = WrapMode.Once;
+        rotationCurve.postWrapMode = WrapMode.Once;
     }
 
     private void Update()
     {
-        // Check what node we're standing on
         HandleGroundDetection();
-
-        // Process mouse clicks
-        HandlePlayerInput();
-
-        // Fade out click indicator if needed
+        if (!walking)
+        {
+            HandlePlayerInput();
+        }
         UpdateClickIndicator();
     }
 
     private void HandleGroundDetection()
     {
-        // Cast a ray down to detect the current node
         RayCastDown();
+        UpdateParenting();
+    }
 
-        // Parent the player to moving platforms
+    private void UpdateParenting()
+    {
         if (currentNode.GetComponent<Walkable>().movingGround)
         {
             transform.parent = currentNode.parent;
@@ -75,48 +103,379 @@ public class IdaMovement : MonoBehaviour
 
     private void HandlePlayerInput()
     {
-        // Check for mouse left-click
-        if (!Input.GetMouseButtonDown(0))
-        {
-            return;
-        }
+        if (!Input.GetMouseButtonDown(0)) return;
 
-        // Cast a ray from the mouse position to find the clicked node
         Ray mouseRay = Camera.main.ScreenPointToRay(Input.mousePosition);
-        RaycastHit mouseHit;
-
-        if (Physics.Raycast(mouseRay, out mouseHit))
+        if (Physics.Raycast(mouseRay, out RaycastHit mouseHit))
         {
-            Walkable hitWalkable = mouseHit.transform.GetComponent<Walkable>();
-            if (hitWalkable != null)
-            {
-                clickedNode = mouseHit.transform;
-
-                // Stop any current movement
-                DOTween.Kill(gameObject.transform);
-
-                // Clear the path and find a new one
-                finalPath.Clear();
-                FindPath();
-
-                // Show the click indicator at the clicked position
-                ShowIndicator(hitWalkable.GetWalkPoint());
-            }
+            ProcessNodeClick(mouseHit);
         }
     }
 
-    private void InitializeClickIndicator()
+    private void ProcessNodeClick(RaycastHit hit)
     {
-        // Create and set up the click indicator if it doesn't exist
-        if (indicatorPrefab == null || currentIndicator != null)
+        Walkable hitWalkable = hit.transform.GetComponent<Walkable>();
+        if (hitWalkable == null) return;
+
+        // Stop current movement and setup new path
+        DOTween.Kill(gameObject.transform);
+        clickedNode = hit.transform;
+        ResetPathfinding();
+        
+        // Find path and start movement
+        if (FindPath())
         {
+            ShowIndicator(hitWalkable.GetWalkPoint());
+            StartMovementSequence();
+        }
+    }
+
+    private void ResetPathfinding()
+    {
+        // Reset pathfinding data
+        pathQueue.Clear();
+        visitedNodes.Clear();
+        movementPoints.Clear();
+    }
+
+    private bool FindPath()
+    {
+        Queue<Transform> searchQueue = new Queue<Transform>();
+        Dictionary<Transform, Transform> previousNodes = new Dictionary<Transform, Transform>();
+
+        searchQueue.Enqueue(currentNode);
+        visitedNodes.Add(currentNode);
+
+        // Perform BFS search for the target node
+        while (searchQueue.Count > 0)
+        {
+            Transform current = searchQueue.Dequeue();
+            
+            // Check if the target node is found
+            if (current == clickedNode)
+            {
+                BuildPath(previousNodes);
+                return true;
+            }
+
+            // Add all valid paths to the search queue
+            foreach (WalkPath path in current.GetComponent<Walkable>().possiblePaths)
+            {
+                if (IsValidPath(path))
+                {
+                    ProcessValidPath(path, searchQueue, previousNodes, current);
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private bool IsValidPath(WalkPath path)
+    {
+        // Check if the path is active and not visited
+        return path.active && !visitedNodes.Contains(path.target);
+    }
+
+    // Process valid path and add to the search queue
+    private void ProcessValidPath(WalkPath path, Queue<Transform> queue, 
+        Dictionary<Transform, Transform> previous, Transform current)
+    {
+        // Add path to the search queue
+        queue.Enqueue(path.target);
+        visitedNodes.Add(path.target);
+        previous[path.target] = current;
+    }
+
+    private void BuildPath(Dictionary<Transform, Transform> previousNodes)
+    {
+        // Build path from the target node to the current node
+        Transform current = clickedNode;
+        List<Transform> path = new List<Transform>();
+
+        // Traverse the path in reverse order
+        while (current != null && current != currentNode)
+        {
+            // Add current node to the path
+            path.Add(current);
+            // Move to the previous node
+            previousNodes.TryGetValue(current, out current);
+        }
+
+        // Reverse the path and add to the queue
+        path.Reverse();
+        foreach (Transform node in path)
+        {
+            pathQueue.Enqueue(node);
+        }
+    }
+
+    private void StartMovementSequence()
+    {
+        if (pathQueue.Count == 0){
             return;
         }
 
+        walking = true;
+        Transform nextNode = pathQueue.Dequeue();
+        ProcessNextNode(nextNode);
+    }
+
+    private void ProcessNextNode(Transform node)
+    {
+        Walkable walkable = node.GetComponent<Walkable>();
+        Vector3 targetPosition = walkable.GetWalkPoint();
+        Vector3 moveDirection = (targetPosition - transform.position).normalized;
+
+        // Validate and fix positions
+        if (!IsValidPosition(targetPosition))
+        {
+            Debug.LogWarning("Invalid target position detected, using fallback position");
+            targetPosition = GetSafePosition(walkable);
+            moveDirection = (targetPosition - transform.position).normalized;
+        }
+
+        // Create movement sequence
+        Sequence moveSequence = DOTween.Sequence();
+
+        // Add the rotation
+        if (!walkable.dontRotate && moveDirection != Vector3.zero)
+        {
+            AddRotationToSequence(moveSequence, moveDirection);
+        }
+
+        // Add movement with a safe path
+        AddSafeMovementToSequence(moveSequence, targetPosition, walkable);
+
+        // Update movement and handle node completion
+        moveSequence.OnComplete(() => HandleNodeComplete(walkable));
+    }
+
+    private Vector3 GetSafePosition(Walkable walkable)
+    {
+        // Get base position from transform
+        Vector3 basePosition = walkable.transform.position;
+        
+        // Add offsets for height and stairs
+        float heightOffset = walkable.walkPointOffset;
+        float stairOffset = 0f;
+        if (walkable.isStair)
+        {
+            stairOffset = walkable.stairOffset;
+        }
+        // Return the safe position
+        return new Vector3(
+            basePosition.x,
+            basePosition.y + heightOffset + stairOffset,
+            basePosition.z
+        );
+    }
+
+    private void AddSafeMovementToSequence(Sequence sequence, Vector3 targetPos, Walkable walkable)
+    {
+        // Calculate distance and duration for movement
+        float distance = Vector3.Distance(transform.position, targetPos);
+        float duration = CalculateMovementDuration(distance, walkable);
+
+        // Check if the target position is a stair
+        if (walkable.isStair)
+        {
+            try
+            {
+                // Create safe path points
+                Vector3[] pathPoints = CreateSafeStairPath(transform.position, targetPos);
+                
+                // Validate all points in the path
+                if (ValidatePathPoints(pathPoints))
+                {
+                    sequence.Append(
+                        transform.DOPath(pathPoints, duration, PathType.CatmullRom)
+                        .SetEase(Ease.InOutSine)
+                    );
+                }
+                else
+                {
+                    // Direct movement if path points are invalid
+                    sequence.Append(
+                        transform.DOMove(targetPos, duration)
+                        .SetEase(movementCurve)
+                    );
+                }
+            }
+            catch
+            {
+                // Direct movement if path points are invalid
+                sequence.Append(
+                    transform.DOMove(targetPos, duration)
+                    .SetEase(movementCurve)
+                );
+            }
+        }
+        else
+        {
+            // Direct movement for non-stair paths
+            sequence.Append(
+                transform.DOMove(targetPos, duration)
+                .SetEase(movementCurve)
+            );
+        }
+    }
+
+    private Vector3[] CreateSafeStairPath(Vector3 start, Vector3 end)
+    {
+        // Ensure valid start and end positions
+        if (!IsValidPosition(start) || !IsValidPosition(end))
+        {
+            Debug.LogError("Invalid start or end position for stair path");
+            return new Vector3[] { transform.position, end };
+        }
+
+        // Calculate safe midpoint
+        Vector3 midPoint = (start + end) * 0.5f;
+        float maxHeight = Mathf.Max(start.y, end.y) + jumpHeight;
+        midPoint.y = maxHeight;
+
+        return new Vector3[]
+        {
+            start,
+            Vector3.Lerp(start, midPoint, 0.25f),
+            midPoint,
+            Vector3.Lerp(midPoint, end, 0.75f),
+            end
+        };
+    }
+
+    private bool ValidatePathPoints(Vector3[] points)
+    {
+        // Check if all points are valid positions
+        foreach (Vector3 point in points)
+        {
+            if (!IsValidPosition(point))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private bool IsValidPosition(Vector3 position)
+    {
+        // Check for valid and finite positions
+        return !float.IsNaN(position.x) && 
+            !float.IsNaN(position.y) && 
+            !float.IsNaN(position.z) &&
+            !float.IsInfinity(position.x) && 
+            !float.IsInfinity(position.y) && 
+            !float.IsInfinity(position.z);
+    }
+
+    private void AddRotationToSequence(Sequence sequence, Vector3 direction)
+    {
+        Quaternion targetRotation = Quaternion.LookRotation(direction, Vector3.up);
+        sequence.Append(
+            transform.DORotateQuaternion(targetRotation, rotationDuration)
+            .SetEase(rotationCurve)
+        );
+    }
+
+
+    private float CalculateMovementDuration(float distance, Walkable walkable)
+    {
+        // Calculate movement duration based on distance and speed
+        float baseTime = distance / baseMovementSpeed;
+        return walkable.isStair ? baseTime * stairSpeedMultiplier : baseTime;
+    }
+
+    private void UpdateMovement(Walkable walkable)
+    {
+        //Update movement behavior
+        // If rotation is enabled, update rotation
+        if (!walkable.dontRotate)
+        {
+            UpdateRotationDuringMovement();
+        }
+        // If the target position is a stair, apply jump arc
+        if (walkable.isStair)
+        {
+            ApplyJumpArc();
+        }
+    }
+
+    private void UpdateRotationDuringMovement()
+    {
+        // Updates the object's rotation to match its movement direction.
+        Vector3 movement = (transform.position - previousPosition);
+        // Check if the object is moving
+        if (movement.magnitude > 0.001f)
+        {
+            // Calculate the target rotation based on the movement direction
+            Quaternion targetRotation = Quaternion.LookRotation(movement.normalized, Vector3.up);
+            // Rotate towards the target rotation
+            transform.rotation = Quaternion.RotateTowards(
+                transform.rotation,
+                targetRotation,
+                rotationSpeed * Time.deltaTime
+            );
+        }
+        previousPosition = transform.position;
+    }
+
+    private void ApplyJumpArc()
+    {
+        // Apply a vertical offset to replicate a jump during movement
+        float moveProgress = moveTimer / currentMoveDuration;
+        float jumpOffset = jumpCurve.Evaluate(moveProgress) * jumpHeight;
+        Vector3 position = transform.position;
+        position.y += jumpOffset;
+        transform.position = position;
+    }
+
+    private void HandleNodeComplete(Walkable walkable)
+    {
+        // Handle node completion and check if the player reaches the final button
+        if (walkable.isButton)
+        {
+            if (walkable.gameObject.name == "18final")
+            {
+                GameManager.instance.OnFinalButtonReached();
+            }
+            else
+            {
+                GameManager.instance.RotateRightPivot();
+            }
+        }
+
+        if (pathQueue.Count > 0)
+        {
+            StartMovementSequence();
+        }
+        else
+        {
+            CompleteMovement();
+        }
+    }
+
+    private void CompleteMovement()
+    {
+        // Complete the movement sequence and reset pathfinding
+        walking = false;
+        ResetPathfinding();
+    }
+
+
+    // Initialize the click indicator object
+    private void InitializeClickIndicator()
+    {
+        // Null check for the indicator prefab
+        if (indicatorPrefab == null || currentIndicator != null){
+            return;
+        }
+        
+        // Instantiate the indicator prefab
         currentIndicator = Instantiate(indicatorPrefab);
         currentIndicator.SetActive(false);
 
-        // Set the indicator color
+        // Retrieve the renderer and set the color
         Renderer renderer = currentIndicator.GetComponent<Renderer>();
         if (renderer != null)
         {
@@ -127,17 +486,18 @@ public class IdaMovement : MonoBehaviour
 
     private void ShowIndicator(Vector3 position)
     {
-        if (currentIndicator == null)
-        {
+        // Null check for the indicator prefab
+        if (currentIndicator == null){
             return;
         }
 
-        // Position the indicator slightly above the node and show it
+        // Set the position and activate the indicator
         currentIndicator.transform.position = position + Vector3.up * 0.1f;
         currentIndicator.SetActive(true);
 
         // Set the color of the indicator
         Renderer renderer = currentIndicator.GetComponent<Renderer>();
+        // Null check for the renderer
         if (renderer != null)
         {
             renderer.material.color = indicatorColor;
@@ -146,187 +506,41 @@ public class IdaMovement : MonoBehaviour
 
     private void UpdateClickIndicator()
     {
-        // Only update the indicator when walking
-        if (!walking)
-        {
+        // Check if the player is walking or the indicator is inactive
+        if (!walking || currentIndicator == null || !currentIndicator.activeInHierarchy){
             return;
         }
 
-        // Fade out the indicator over time
-        if (currentIndicator != null && currentIndicator.activeInHierarchy)
+        //Retrieve the renderer
+        Renderer renderer = currentIndicator.GetComponent<Renderer>();
+        if (renderer != null)
         {
-            Renderer renderer = currentIndicator.GetComponent<Renderer>();
-            if (renderer != null)
+            // Fade out the indicator over time
+            Color fadeColor = renderer.material.color;
+            fadeColor.a -= Time.deltaTime / indicatorFadeTime;
+
+            // Deactivate the indicator if the alpha is zero
+            if (fadeColor.a <= 0)
             {
-                Color fadeColor = renderer.material.color;
-                fadeColor.a -= Time.deltaTime / indicatorFadeTime;
-
-                if (fadeColor.a <= 0)
-                {
-                    currentIndicator.SetActive(false);
-                }
-                else
-                {
-                    renderer.material.color = fadeColor;
-                }
-            }
-        }
-    }
-
-    private void FindPath()
-    {
-        // Initialize lists for pathfinding
-        List<Transform> nextNodes = new List<Transform>();
-        List<Transform> visitedNodes = new List<Transform>();
-
-        // Add initial valid paths to search
-        Walkable currentWalkable = currentNode.GetComponent<Walkable>();
-        foreach (WalkPath path in currentWalkable.possiblePaths)
-        {
-            if (path.active)
-            {
-                nextNodes.Add(path.target);
-                path.target.GetComponent<Walkable>().previousBlock = currentNode;
-            }
-        }
-
-        visitedNodes.Add(currentNode);
-
-        // Traverse nodes recursively
-        TraverseNode(nextNodes, visitedNodes);
-
-        // Build the final path to the target node
-        BuildPath();
-    }
-
-    private void TraverseNode(List<Transform> nextNodes, List<Transform> visitedNodes)
-    {
-        // Base case - no more nodes to check
-        if (!nextNodes.Any())
-        {
-            return;
-        }
-
-        // Get the next node to check
-        Transform current = nextNodes.First();
-        nextNodes.Remove(current);
-
-        // If we found the target, stop searching
-        if (current == clickedNode)
-        {
-            return;
-        }
-
-        // Add all connected nodes to the search
-        Walkable currentWalkable = current.GetComponent<Walkable>();
-        foreach (WalkPath path in currentWalkable.possiblePaths)
-        {
-            if (!visitedNodes.Contains(path.target) && path.active)
-            {
-                nextNodes.Add(path.target);
-                path.target.GetComponent<Walkable>().previousBlock = current;
-            }
-        }
-
-        visitedNodes.Add(current);
-
-        // Continue searching recursively
-        TraverseNode(nextNodes, visitedNodes);
-    }
-
-    private void BuildPath()
-    {
-        // Work backward from the target to the start node
-        Transform currentPathNode = clickedNode;
-        while (currentPathNode != currentNode)
-        {
-            finalPath.Add(currentPathNode);
-            Walkable nodeWalkable = currentPathNode.GetComponent<Walkable>();
-
-            if (nodeWalkable.previousBlock != null)
-            {
-                currentPathNode = nodeWalkable.previousBlock;
+                currentIndicator.SetActive(false);
             }
             else
             {
-                return;
+                // Set the new color with the faded alpha
+                renderer.material.color = fadeColor;
             }
         }
-
-        // Add the clicked node to the path
-        finalPath.Insert(0, clickedNode);
-
-        // Start following the path
-        TraversePath();
-    }
-
-    private void TraversePath()
-    {
-        // Set up the movement sequence
-        Sequence moveSequence = DOTween.Sequence();
-        walking = true;
-
-        // Create movement tweens for each node in the path
-        for (int i = finalPath.Count - 1; i > 0; i--)
-        {
-            Walkable currentWalkable = finalPath[i].GetComponent<Walkable>();
-            float moveDuration = 0.2f;
-
-            // Slow down movement on stairs
-            if (currentWalkable.isStair)
-            {
-                moveDuration *= 1.5f;
-            }
-
-            // Move to the next point
-            moveSequence.Append(transform.DOMove(currentWalkable.GetWalkPoint(), moveDuration)
-                .SetEase(Ease.Linear));
-
-            // Rotate to face the movement direction unless specified not to
-            if (!currentWalkable.dontRotate)
-            {
-                moveSequence.Join(transform.DOLookAt(finalPath[i].position, 0.1f, AxisConstraint.Y, Vector3.up));
-            }
-        }
-
-        // Handle button press at the end of the path
-        if (clickedNode.GetComponent<Walkable>().isButton)
-        {
-            moveSequence.AppendCallback(() => GameManager.instance.RotateRightPivot());
-        }
-
-        // Clear the path after completing it
-        moveSequence.AppendCallback(() => ClearPath());
-    }
-
-    private void ClearPath()
-    {
-        // Clear all previousBlock references
-        foreach (Transform pathNode in finalPath)
-        {
-            if (pathNode != null)
-            {
-                Walkable walkable = pathNode.GetComponent<Walkable>();
-                if (walkable != null)
-                {
-                    walkable.previousBlock = null;
-                }
-            }
-        }
-
-        finalPath.Clear();
-        walking = false;
     }
 
     private void RayCastDown()
     {
-        // Cast a ray downward to detect the current node
+        // Cast a ray downwards to detect the current node
         Ray playerRay = new Ray(transform.GetChild(0).position, -transform.up);
-        RaycastHit playerHit;
-
-        if (Physics.Raycast(playerRay, out playerHit))
+        // Check if the player is on a walkable node
+        if (Physics.Raycast(playerRay, out RaycastHit playerHit))
         {
             Walkable hitWalkable = playerHit.transform.GetComponent<Walkable>();
+            // Update the current node if a walkable node is detected
             if (hitWalkable != null)
             {
                 currentNode = playerHit.transform;
@@ -334,40 +548,36 @@ public class IdaMovement : MonoBehaviour
         }
     }
 
+    // Visualize the path and movement gizmos in the scene view
     private void OnDrawGizmos()
     {
-        // Draw the path using gizmos
         DrawPathGizmos();
-
-        // Draw the raycast for debugging
-        DrawRaycastGizmos();
+        DrawMovementGizmos();
     }
 
+    // Visualize the path and movement gizmos in the scene view
     private void DrawPathGizmos()
     {
-        // Draw lines showing the current path
-        if (finalPath == null || finalPath.Count == 0)
-        {
-            return;
-        }
+        if (pathQueue == null || pathQueue.Count == 0) return;
 
         Gizmos.color = Color.yellow;
-        for (int i = 0; i < finalPath.Count - 1; i++)
+        Transform[] pathArray = pathQueue.ToArray();
+        for (int i = 0; i < pathArray.Length - 1; i++)
         {
-            if (finalPath[i] != null && finalPath[i + 1] != null)
+            if (pathArray[i] != null && pathArray[i + 1] != null)
             {
-                Vector3 start = finalPath[i].GetComponent<Walkable>().GetWalkPoint();
-                Vector3 end = finalPath[i + 1].GetComponent<Walkable>().GetWalkPoint();
+                Vector3 start = pathArray[i].GetComponent<Walkable>().GetWalkPoint();
+                Vector3 end = pathArray[i + 1].GetComponent<Walkable>().GetWalkPoint();
                 Gizmos.DrawLine(start, end);
             }
         }
     }
 
-    private void DrawRaycastGizmos()
+    // Visualize the path and movement gizmos in the scene view
+    private void DrawMovementGizmos()
     {
-        // Draw the ground detection ray
         Gizmos.color = Color.blue;
-        Ray ray = new Ray(transform.GetChild(0).position, -transform.up);
-        Gizmos.DrawRay(ray);
+        Gizmos.DrawRay(transform.position + Vector3.up * 0.5f, -Vector3.up);
     }
 }
+

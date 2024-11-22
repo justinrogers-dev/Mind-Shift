@@ -6,12 +6,12 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
+    path: Assets/Scenes/Main Menu.unity
+    guid: 14cd7945133e44279b38c35c80d0a720
+  - enabled: 1
     path: Assets/Scenes/Illusion 1.unity
-    guid: 183c68cc56a4f4108b4cd2d4bc72c521
+    guid: 5801bcf3e10f04eb89fdc4884dc328e3
   - enabled: 1
     path: Assets/Scenes/Illusion 2.unity
-    guid: 036e2f81a2daf45f9bb12c3ae9f366bc
-  - enabled: 1
-    path: Assets/Scenes/Illusion 3.unity
-    guid: 5801bcf3e10f04eb89fdc4884dc328e3
+    guid: c0c405fad0ce14493a48ae7ed90bbcd8
   m_configObjects: {}
