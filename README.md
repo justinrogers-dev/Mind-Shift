@@ -26,7 +26,9 @@ A Unity project implementing mechanics inspired by Monument Valley
 
 ### Build Instructions
 1. Add all scenes to Build Settings
-2. Ensure Main Menu scene is first in build order
+2. Select the Main Menu in scenes
+3. Ensure Main Menu scene is first in build order
+4. Press play
 
 ### Credit
 - Walkable.cs was inspired by the Walkable.cs script created by DwipMakwana on GitHub: https://github.com/DwipMakwana/Monument-Valley-Clone/blob/main/Assets/Scripts/Walkable.cs
