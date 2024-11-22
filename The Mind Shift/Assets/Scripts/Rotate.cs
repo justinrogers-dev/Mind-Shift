@@ -9,7 +9,6 @@ public class Rotate : MonoBehaviour
     public float rotationAngle = 90f;
 
     private bool isRotating = false;
-    private bool hasRotated = false;
     private Quaternion startRotation;
     private Quaternion targetRotation;
     private float rotationProgress = 0f;
@@ -42,7 +41,7 @@ public class Rotate : MonoBehaviour
                 
                 if (idaMovement != null)
                 {
-                    idaMovement.UpdateOrientationAfterRotation();
+                    // idaMovement.RayCastDown();
                 }
             }
         }

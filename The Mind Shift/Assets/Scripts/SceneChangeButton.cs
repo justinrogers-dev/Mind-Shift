@@ -27,7 +27,7 @@ public class SceneChangeButton : MonoBehaviour, IPointerEnterHandler, IPointerEx
     void ChangeScene()
     {
         StartCoroutine(ClickAnimation());
-        LevelManager.Instance.LoadScene(sceneToLoad);
+        //LevelManager.Instance.LoadScene(sceneToLoad);
     }
 
 
